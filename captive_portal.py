@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # vim: set expandtab tabstop=4 shiftwidth=4 :
-# Project Byzantium: http://wiki.hacdc.org/index.php/Byzantium
-__license__ = 'GPL v3'
+"""
+Project Byzantium: http://wiki.hacdc.org/index.php/Byzantium
 
 # captive_portal.py
 # This application implements a little web server that mesh clients will be
@@ -21,7 +21,6 @@ __license__ = 'GPL v3'
 #    3: Bad IP tables commands during initialization.
 #    4: Bad parameters passed to IP tables during initialization.
 #    5: Daemon already running on this network interface.
-
 # v0.1 - Initial release.
 # v0.2 - Added a --test option that doesn't actually do anything to the system
 #        the daemon's running on, it just prints what the command would be.
@@ -38,26 +37,23 @@ __license__ = 'GPL v3'
 #        wrote.
 #      - Added a second listener for HTTPS connections.
 
-# TODO:
+TODO:
 
-# Modules.
-import cherrypy
-from cherrypy.process.plugins import PIDFile
-from mako.lookup import TemplateLookup
 
+"""
+__authors__ = ["haxwithaxe <me@haxwithaxe.net>"]
+__license__ = "GPLv3"
+
+import byzantium
 import argparse
-import fcntl
-import logging
 import os
-import socket
-import struct
-import subprocess
+import web
 
-# Need this for the 404 method.
-def get_ip_address(interface):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    return socket.inet_ntoa(fcntl.ioctl(sock.fileno(), 0x8915,
-                            struct.pack('256s', interface[:15]))[20:24])
+def get_remote_addr():
+    return web.ctx..env.get("REMOTE-ADDR")
+
+def get_remote_lang():
+    return web.ctx.env.get("ACCEPT-LANGUAGE")
 
 # The CaptivePortalDetector class implements a fix for an undocumented bit of
 # fail in Apple iOS.  iProducts attempt to access a particular file hidden in
@@ -65,15 +61,11 @@ def get_ip_address(interface):
 # to log into the local captive portal (even if it doesn't support that
 # functionality).  This breaks things for users of iOS, unless we fix it in
 # the captive portal.
-class CaptivePortalDetector(object):
-    # index(): Pretends to be /library/test and /library/test/index.html.
-    def index(self):
-        return("You shouldn't be seeing this, either.")
-    index.exposed = True
+class AppleHandler(web.page.Page):
 
-    # success_html(): Pretends to be http://apple.com/library/test/success.html.
     def success_html(self):
-        logging.debug("iOS device detected.")
+        """Pretends to be http://apple.com/library/test/success.html."""
+        self.logger.debug("iOS device detected.")
         success = '''
                 <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
                 <HTML>
@@ -86,53 +78,33 @@ class CaptivePortalDetector(object):
                 </HTML>
                 '''
         return success
-    success_html.exposed = True
-
-# Dummy class that has to exist to create a durectory URI hierarchy.
-class Library(object):
-
-    logging.debug("Instantiating Library() dummy object.")
-    test = CaptivePortalDetector()
-
-    # index(): Pretends to be /library and /library/index.html.
-    def index(self):
-        return("You shouldn't be seeing this.")
-    index.exposed = True
-
 
 # The CaptivePortal class implements the actual captive portal stuff - the
 # HTML front-end and the IP tables interface.
-class CaptivePortal(object):
-
-    def __init__(self, args):
-        self.args = args
-
-        logging.debug("Mounting Library() from CaptivePortal().")
-        self.library = Library()
-
-    # index(): Pretends to be / and /index.html.
-    def index(self):
+class CaptivePortal(web.page.Page):
+    logger_name = "CaptivePortal"
+    
+    def captive_portal(self):
         # Identify the primary language the client's web browser supports.
         try:
-            clientlang = cherrypy.request.headers['Accept-Language']
-            clientlang = clientlang.split(',')[0].lower()
+            client_lang = get_remote_lang()
+            if client_lang: client_lang = client_lang.split(",")[0].lower()
         except:
             logging.debug("Client language not found.  Defaulting to en-us.")
-            clientlang = 'en-us'
-        logging.debug("Current browser language: %s", clientlang)
+            client_lang = "en-us"
+        logger.debug("Current browser language: %s", client_lang)
 
         # Piece together the filename of the /index.html file to return based
         # on the primary language.
-        indexhtml = "index.html." + clientlang
-        templatelookup = build_templatelookup(self.args)
+        captive_portal_template = "index.html.%s" % client_lang
+
         try:
-            page = templatelookup.get_template(indexhtml)
+            page = self.render.
         except:
-            page = templatelookup.get_template('index.html.en-us')
-            logging.debug("Unable to find HTML template for language %s!", clientlang)
-            logging.debug("\tDefaulting to /srv/captiveportal/index.html.en-us.")
+            page = self.render.Template("index.html.en-us")
+            logging.debug("Unable to find HTML template for language %s!", client_lang)
+            logging.debug("\tDefaulting to template: index.html.en-us")
         return page.render()
-    index.exposed = True
 
     # whitelist(): Takes the form input from /index.html.*, adds the IP address
     # of the client to IP tables, and then flips the browser to the node's
@@ -140,45 +112,34 @@ class CaptivePortal(object):
     # Returns an HTML page with an HTTP refresh as its sole content to the
     # client.
     def whitelist(self, accepted=None):
+        """ Takes the form input from /index.html.*, adds the IP address
+            of the client to IP tables, and then flips the browser to the node's
+            frontpage.  Takes one argument, a value for the variable 'accepted'.
+            Returns an HTML page with an HTTP refresh as its sole content to the
+            client.
+        """
         # Extract the client's IP address from the client headers.
-        clientip = cherrypy.request.headers['Remote-Addr']
-        logging.debug("Client's IP address: %s", clientip)
+        clientip = web.ctx.env.get("Remote-Addr")
+        self.logger.debug("Client's IP address: %s", clientip)
 
         # Set up the command string to add the client to the IP tables ruleset.
-        addclient = ['/usr/local/sbin/captive-portal.sh', 'add', clientip]
+        byzantium.shell.iptables.add_client(client_ip)
         if self.args.test:
-            logging.debug("Command that would be executed:\n%s", addclient)
-        else:
-            subprocess.call(addclient)
+            logging.debug("Client IP:\n%s", client_ip)
 
         # Assemble some HTML to redirect the client to the node's frontpage.
-        redirect = """
-                   <html>
-                   <head>
-                   <meta http-equiv="refresh" content="0; url=http://""" + self.args.address + """/index.html" />
-                   </head>
-                   <body>
-                   </body>
-                   </html>"""
+        url = "http://%s/%s" % (, )
 
-        logging.debug("Generated HTML refresh is:")
-        logging.debug(redirect)
+        logging.debug("Generated redirect url is: ", url)
 
         # Fire the redirect at the client.
-        return redirect
-    whitelist.exposed = True
+        return self.render.redirect(url)
 
-    # error_page_404(): Registered with CherryPy as the default handler for
-    # HTTP 404 errors (file or resource not found).  Takes four arguments
-    # (required by CherryPy), returns some HTML generated at runtime that
-    # redirects the client to http://<IP address>/, where it'll be caught by
-    # CaptivePortal.index().  I wish there was an easier way to do this (like
-    # calling self.index() directly) but the stable's fresh out of ponies.
-    # We don't use any of the arguments passed to this method so I reference
-    # them in debug mode.
     def error_page_404(status, message, traceback, version):
+        """ Handler for HTTP 404 errors (file or resource not found). redirects the client to http://<IP address>/, where it'll be caught by CaptivePortal.index().  I wish there was an easier way to do this (like calling self.index() directly) but the stable's fresh out of ponies. We don't use any of the arguments passed to this method so I reference them in debug mode.
+        """
         # Extract the client's IP address from the client headers.
-        clientip = cherrypy.request.headers['Remote-Addr']
+        client_ip = get_remote_addr()
         logging.debug("Client's IP address: %s", clientip)
         logging.debug("Value of status is: %s", status)
         logging.debug("Value of message is: %s", message)
@@ -202,7 +163,7 @@ class CaptivePortal(object):
     cherrypy.config.update({'error_page.404':error_page_404})
 
 
-def parse_args():
+def init_parse_args():
     parser = argparse.ArgumentParser(conflict_handler='resolve', description="This daemon implements the captive "
                                      "portal functionality of Byzantium Linux. pecifically, it acts as the front end "
                                      "to IP tables and automates the addition of mesh clients to the whitelist.")
@@ -229,7 +190,6 @@ def parse_args():
                         "commands without altering the test system.")
     return parser.parse_args()
 
-
 def check_args(args):
     if not args.port == 31337 and args.sslport == 31338:
         args.sslport = args.port + 1
@@ -253,10 +213,10 @@ def check_args(args):
         args.appconfig = "%s/captiveportal.conf" % args.configdir
 
     if args.debug:
-        print "Captive portal debugging mode is on."
+        logging.info("Captive portal debugging mode is on.")
 
     if args.test:
-        print "Captive portal functional testing mode is on."
+        logging.info("Captive portal functional testing mode is on."
 
     return args
 
@@ -388,12 +348,9 @@ def main():
     else:
         logging.basicConfig(level=logging.ERROR)
     create_pidfile(args)
-    update_cherrypy_config(args.port)
-    start_ssl_listener(args)
-    setup_url_tree(args)
+    args.port
     iptables = setup_iptables(args)
     setup_reaper(args.test)
-    setup_hijacker(args)
     check_ip_tables(iptables, args)
     start_web_server()
 
